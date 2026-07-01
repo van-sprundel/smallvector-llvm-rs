@@ -93,3 +93,118 @@ impl<T: std::marker::Copy, const N: usize> SmallVec<T, N> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn new_is_empty() {
+        let sv = SmallVec::<i32, 4>::new();
+        assert!(sv.is_empty());
+        assert_eq!(sv.len(), 0);
+        assert_eq!(sv.capacity(), 4);
+    }
+
+    #[test]
+    fn push_stays_inline() {
+        let mut sv = SmallVec::<i32, 4>::new();
+        sv.push(10);
+        sv.push(20);
+        assert_eq!(sv.len(), 2);
+        assert!(matches!(sv, SmallVec::Inline { .. }));
+        assert_eq!(sv.as_slice(), &[10, 20]);
+    }
+
+    #[test]
+    fn push_fills_inline_exactly() {
+        let mut sv = SmallVec::<i32, 3>::new();
+        sv.push(1);
+        sv.push(2);
+        sv.push(3);
+        assert_eq!(sv.len(), 3);
+        assert!(matches!(sv, SmallVec::Inline { .. }));
+        assert_eq!(sv.as_slice(), &[1, 2, 3]);
+    }
+
+    #[test]
+    fn push_spills_to_heap() {
+        let mut sv = SmallVec::<i32, 2>::new();
+        sv.push(1);
+        sv.push(2);
+        assert!(matches!(sv, SmallVec::Inline { .. }));
+
+        sv.push(3); // triggers spill
+        assert!(matches!(sv, SmallVec::Spilled(_)));
+        assert_eq!(sv.len(), 3);
+        assert_eq!(sv.as_slice(), &[1, 2, 3]);
+    }
+
+    #[test]
+    fn capacity_grows_after_spill() {
+        let mut sv = SmallVec::<i32, 2>::new();
+        assert_eq!(sv.capacity(), 2);
+
+        sv.push(1);
+        sv.push(2);
+        sv.push(3); // spill with N*2 = 4
+        assert!(sv.capacity() >= 3);
+    }
+
+    #[test]
+    fn pop_inline() {
+        let mut sv = SmallVec::<i32, 4>::new();
+        sv.push(10);
+        sv.push(20);
+        assert_eq!(sv.pop(), Some(20));
+        assert_eq!(sv.pop(), Some(10));
+        assert_eq!(sv.pop(), None);
+    }
+
+    #[test]
+    fn pop_spilled() {
+        let mut sv = SmallVec::<i32, 1>::new();
+        sv.push(1);
+        sv.push(2); // spill
+        assert_eq!(sv.pop(), Some(2));
+        assert_eq!(sv.pop(), Some(1));
+        assert_eq!(sv.pop(), None);
+    }
+
+    #[test]
+    fn as_slice_empty() {
+        let sv = SmallVec::<i32, 4>::new();
+        assert_eq!(sv.as_slice(), &[] as &[i32]);
+    }
+
+    #[test]
+    fn default_matches_new() {
+        let a = SmallVec::<u8, 8>::new();
+        let b = SmallVec::<u8, 8>::default();
+        assert_eq!(a.len(), b.len());
+        assert_eq!(a.as_slice(), b.as_slice());
+    }
+
+    #[test]
+    fn many_pushes_after_spill() {
+        let mut sv = SmallVec::<i32, 2>::new();
+        for i in 0..100 {
+            sv.push(i);
+        }
+        assert_eq!(sv.len(), 100);
+        let slice = sv.as_slice();
+        for (i, &val) in slice.iter().enumerate() {
+            assert_eq!(Ok(val), i32::try_from(i));
+        }
+    }
+
+    #[test]
+    fn zero_inline_capacity() {
+        // N=0 means every push spills immediately
+        let mut sv = SmallVec::<i32, 0>::new();
+        assert!(sv.is_empty());
+        sv.push(42);
+        assert!(matches!(sv, SmallVec::Spilled(_)));
+        assert_eq!(sv.as_slice(), &[42]);
+    }
+}
